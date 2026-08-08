@@ -1019,6 +1019,7 @@ async function main() {
   const user = await User.findOne({ email: EMAIL });
   if (!user) throw new Error(`User not found: ${EMAIL}`);
   const tenantId = user.tenantId;
+  if (!tenantId) throw new Error(`User ${EMAIL} has no tenantId`);
   const userId = user._id as mongoose.Types.ObjectId;
   console.log(`Target: ${EMAIL} → tenantId=${tenantId}\n`);
 
