@@ -298,17 +298,44 @@ export const DashboardService = {
           },
         },
       ]),
-      Invoice.aggregate<{ _id: string; orders: number; revenue: number }>([
+      Invoice.aggregate<{
+        _id: mongoose.Types.ObjectId | string;
+        name: string;
+        orders: number;
+        revenue: number;
+      }>([
         { $match: tenantInvoices(tenantId) },
         {
           $group: {
-            _id: { $trim: { input: "$customerName" } },
+            _id: {
+              $cond: [
+                { $and: [{ $ne: ["$customerId", null] }, { $ifNull: ["$customerId", false] }] },
+                "$customerId",
+                { $trim: { input: "$customerName" } },
+              ],
+            },
+            name: { $first: { $trim: { input: "$customerName" } } },
             orders: { $sum: 1 },
             revenue: { $sum: "$totalAmount" },
           },
         },
         { $sort: { revenue: -1 } },
         { $limit: 8 },
+        {
+          $lookup: {
+            from: "customers",
+            localField: "_id",
+            foreignField: "_id",
+            as: "cust",
+          },
+        },
+        {
+          $addFields: {
+            resolvedName: {
+              $ifNull: [{ $arrayElemAt: ["$cust.name", 0] }, "$name"],
+            },
+          },
+        },
       ]),
       Invoice.aggregate<{ s: number }>([
         {
@@ -533,11 +560,18 @@ export const DashboardService = {
       };
     });
 
-    const topCustomers = topCustomersAgg.map((c) => ({
-      name: c._id || "—",
-      orders: c.orders,
-      revenue: roundMoney(c.revenue),
-    }));
+    const topCustomers = topCustomersAgg.map((c) => {
+      const id =
+        c._id && typeof c._id === "object" && "toString" in c._id
+          ? String(c._id)
+          : undefined;
+      return {
+        id,
+        name: (c as { resolvedName?: string }).resolvedName || c.name || "—",
+        orders: c.orders,
+        revenue: roundMoney(c.revenue),
+      };
+    });
 
     const topCategories = topCatAgg.map((c) => ({
       categoryId: c._id ? String(c._id) : null,

@@ -31,6 +31,13 @@ router.get(
 );
 
 router.get(
+  "/:id/summary",
+  auth(...customerAccess),
+  validateRequest(customerIdParamSchema),
+  CustomerController.getSummary
+);
+
+router.get(
   "/:id",
   auth(...customerAccess),
   validateRequest(customerIdParamSchema),

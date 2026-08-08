@@ -26,6 +26,7 @@ export const InvoiceController = {
       status: (q.status as "all" | "paid" | "unpaid" | "overdue" | "due") || "all",
       since: q.since,
       customer: q.customer,
+      customerId: q.customerId,
     });
     sendResponse(res, {
       statusCode: httpStatus.OK,

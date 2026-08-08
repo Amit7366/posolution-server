@@ -43,6 +43,18 @@ export const CustomerController = {
     });
   }),
 
+  getSummary: catchAsync(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    const result = await CustomerService.getSummaryFromDB(req.params.id, tenantId);
+
+    sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: "Customer summary",
+      data: result,
+    });
+  }),
+
   update: catchAsync(async (req, res) => {
     const tenantId = resolveTenantId(req);
     const result = await CustomerService.updateIntoDB(

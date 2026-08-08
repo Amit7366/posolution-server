@@ -90,5 +90,6 @@ export const getInvoiceListQuerySchema = z.object({
     status: z.enum(["all", "paid", "unpaid", "overdue", "due"]).optional(),
     since: z.string().optional(),
     customer: z.string().optional(),
+    customerId: z.string().optional(),
   }),
 });

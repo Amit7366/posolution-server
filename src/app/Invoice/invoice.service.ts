@@ -275,6 +275,7 @@ export const InvoiceService = {
       status?: "all" | "paid" | "unpaid" | "overdue" | "due";
       since?: string;
       customer?: string;
+      customerId?: string;
     }
   ) {
     const page = Math.max(1, Number(opts.page) || 1);
@@ -317,7 +318,12 @@ export const InvoiceService = {
       }
     }
 
-    if (opts.customer?.trim()) {
+    if (opts.customerId?.trim()) {
+      if (!Types.ObjectId.isValid(opts.customerId)) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Invalid customer id");
+      }
+      filter.customerId = new Types.ObjectId(opts.customerId);
+    } else if (opts.customer?.trim()) {
       const rx = new RegExp(opts.customer!.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       filter.customerName = rx;
     }

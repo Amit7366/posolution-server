@@ -1,6 +1,8 @@
 import httpStatus from "http-status";
+import { Types } from "mongoose";
 import { Customer } from "./customer.model";
 import { TCustomer } from "./customer.interface";
+import { Invoice } from "../Invoice/invoice.model";
 import AppError from "../errors/AppError";
 
 type TListOptions = {
@@ -105,5 +107,105 @@ export const CustomerService = {
     );
     if (!doc) throw new AppError(httpStatus.NOT_FOUND, "Customer not found");
     return doc;
+  },
+
+  async getSummaryFromDB(id: string, tenantId: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new AppError(httpStatus.BAD_REQUEST, "Invalid customer id");
+    }
+
+    const customer = await Customer.findOne({ _id: id, tenantId }).lean();
+    if (!customer) throw new AppError(httpStatus.NOT_FOUND, "Customer not found");
+
+    const customerOid = new Types.ObjectId(id);
+    const name = String(customer.name ?? "").trim();
+    const phone = String(customer.phone ?? "").trim();
+
+    const orMatch: Record<string, unknown>[] = [{ customerId: customerOid }];
+    if (name) {
+      orMatch.push({
+        $and: [
+          {
+            $or: [{ customerId: null }, { customerId: { $exists: false } }],
+          },
+          {
+            customerName: {
+              $regex: `^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+              $options: "i",
+            },
+          },
+        ],
+      });
+    }
+    if (phone) {
+      orMatch.push({
+        $and: [
+          {
+            $or: [{ customerId: null }, { customerId: { $exists: false } }],
+          },
+          { customerPhone: phone },
+        ],
+      });
+    }
+
+    const [agg] = await Invoice.aggregate<{
+      invoiceCount: number;
+      paidCount: number;
+      unpaidCount: number;
+      totalPurchase: number;
+      totalPaid: number;
+      totalDue: number;
+      lastPurchaseAt: Date | null;
+    }>([
+      {
+        $match: {
+          tenantId,
+          isDeleted: { $ne: true },
+          $or: orMatch,
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          invoiceCount: { $sum: 1 },
+          paidCount: { $sum: { $cond: [{ $eq: ["$status", "paid"] }, 1, 0] } },
+          unpaidCount: { $sum: { $cond: [{ $eq: ["$status", "unpaid"] }, 1, 0] } },
+          totalPurchase: { $sum: "$totalAmount" },
+          totalPaid: { $sum: "$paid" },
+          totalDue: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$status", "unpaid"] },
+                    { $ne: ["$hold", true] },
+                  ],
+                },
+                { $max: [{ $subtract: ["$totalAmount", "$paid"] }, 0] },
+                0,
+              ],
+            },
+          },
+          lastPurchaseAt: { $max: "$createdAt" },
+        },
+      },
+    ]);
+
+    const round = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+
+    return {
+      customer,
+      stats: {
+        invoiceCount: agg?.invoiceCount ?? 0,
+        paidCount: agg?.paidCount ?? 0,
+        unpaidCount: agg?.unpaidCount ?? 0,
+        totalPurchase: round(agg?.totalPurchase ?? 0),
+        totalPaid: round(agg?.totalPaid ?? 0),
+        totalDue: round(agg?.totalDue ?? 0),
+        lastPurchaseAt: agg?.lastPurchaseAt
+          ? new Date(agg.lastPurchaseAt).toISOString()
+          : null,
+      },
+    };
   },
 };
