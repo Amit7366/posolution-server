@@ -3,7 +3,7 @@ import mongoose, { ClientSession, Types } from "mongoose";
 import AppError from "../errors/AppError";
 import { Product } from "../Product/product.model";
 import { Invoice } from "./invoice.model";
-import { TInvoiceItem, TInvoiceParty, TInvoiceStatus } from "./invoice.interface";
+import { TInvoiceItem, TInvoiceParty, TInvoiceStatus, TPaymentType } from "./invoice.interface";
 import { generateNextInvoiceNo } from "./invoice.utils";
 
 type LineInput = {
@@ -141,6 +141,10 @@ type CreatePayload = {
   status: TInvoiceStatus;
   dueDate: string | Date;
   notes?: string;
+  customerNote?: string;
+  paymentType?: TPaymentType;
+  cashAmount?: number;
+  changeAmount?: number;
 };
 
 export const InvoiceService = {
@@ -155,6 +159,18 @@ export const InvoiceService = {
     const paid = roundMoney(Math.max(0, Number(payload.paid ?? 0)));
     let status: TInvoiceStatus = payload.status === "paid" ? "paid" : "unpaid";
     if (paid >= totalAmount) status = "paid";
+
+    const paymentType: TPaymentType = payload.paymentType ?? "cash";
+    const cashAmount = roundMoney(Math.max(0, Number(payload.cashAmount ?? (status === "paid" ? totalAmount : 0))));
+    const changeAmount = roundMoney(
+      Math.max(
+        0,
+        Number(
+          payload.changeAmount ??
+            (paymentType === "cash" && status === "paid" ? Math.max(0, cashAmount - totalAmount) : 0)
+        )
+      )
+    );
 
     const fromParty: TInvoiceParty = {
       name: payload.fromParty?.name ?? "",
@@ -171,47 +187,7 @@ export const InvoiceService = {
 
     const linesForStock = built.items.map((i) => ({ productId: i.productId, qty: i.qty }));
 
-    if (status === "paid") {
-      const session = await mongoose.startSession();
-      try {
-        await session.withTransaction(async () => {
-          await deductStock(session, tenantId, linesForStock);
-          await Invoice.create(
-            [
-              {
-                tenantId,
-                invoiceNo,
-                fromParty,
-                customerName: payload.customerName.trim(),
-                customerEmail: payload.customerEmail?.trim() ?? "",
-                customerPhone: payload.customerPhone?.trim() ?? "",
-                customerAddress: payload.customerAddress?.trim() ?? "",
-                title: payload.title?.trim() || "Sales invoice",
-                items: built.items,
-                subTotal: built.subTotal,
-                discountTotal: built.discountTotal,
-                vatPercent: Math.min(100, Math.max(0, Number(payload.vatPercent) || 0)),
-                vatAmount,
-                totalAmount,
-                paid,
-                status,
-                dueDate,
-                notes: payload.notes?.trim() ?? "",
-                stockDeducted: true,
-                createdBy: user?.objectId,
-              },
-            ],
-            { session }
-          );
-        });
-      } finally {
-        await session.endSession();
-      }
-      const doc = await Invoice.findOne({ tenantId, invoiceNo }).lean();
-      return doc;
-    }
-
-    const doc = await Invoice.create({
+    const commonFields = {
       tenantId,
       invoiceNo,
       fromParty,
@@ -230,8 +206,38 @@ export const InvoiceService = {
       status,
       dueDate,
       notes: payload.notes?.trim() ?? "",
-      stockDeducted: false,
+      customerNote: payload.customerNote?.trim() ?? "",
+      paymentType,
+      cashAmount,
+      changeAmount,
       createdBy: user?.objectId,
+    };
+
+    if (status === "paid") {
+      const session = await mongoose.startSession();
+      try {
+        await session.withTransaction(async () => {
+          await deductStock(session, tenantId, linesForStock);
+          await Invoice.create(
+            [
+              {
+                ...commonFields,
+                stockDeducted: true,
+              },
+            ],
+            { session }
+          );
+        });
+      } finally {
+        await session.endSession();
+      }
+      const doc = await Invoice.findOne({ tenantId, invoiceNo }).lean();
+      return doc;
+    }
+
+    const doc = await Invoice.create({
+      ...commonFields,
+      stockDeducted: false,
     });
 
     return doc.toObject();

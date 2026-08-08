@@ -30,6 +30,10 @@ export const createInvoiceSchema = z.object({
     status: z.enum(["unpaid", "paid"]),
     dueDate: z.string().min(1),
     notes: z.string().optional(),
+    customerNote: z.string().optional(),
+    paymentType: z.enum(["cash", "card", "bkash", "nagad", "other"]).optional(),
+    cashAmount: z.coerce.number().min(0).optional(),
+    changeAmount: z.coerce.number().min(0).optional(),
   }),
 });
 
@@ -50,6 +54,10 @@ export const updateInvoiceSchema = z.object({
     status: z.enum(["unpaid", "paid"]).optional(),
     dueDate: z.string().optional(),
     notes: z.string().optional(),
+    customerNote: z.string().optional(),
+    paymentType: z.enum(["cash", "card", "bkash", "nagad", "other"]).optional(),
+    cashAmount: z.coerce.number().min(0).optional(),
+    changeAmount: z.coerce.number().min(0).optional(),
   }),
 });
 

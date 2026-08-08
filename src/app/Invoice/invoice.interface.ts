@@ -2,6 +2,7 @@ import type { Model } from "mongoose";
 import { Types } from "mongoose";
 
 export type TInvoiceStatus = "unpaid" | "paid";
+export type TPaymentType = "cash" | "card" | "bkash" | "nagad" | "other";
 
 export type TInvoiceItem = {
   productId: Types.ObjectId;
@@ -39,6 +40,10 @@ export type TInvoice = {
   status: TInvoiceStatus;
   dueDate: Date;
   notes?: string;
+  customerNote?: string;
+  paymentType?: TPaymentType;
+  cashAmount?: number;
+  changeAmount?: number;
   stockDeducted: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;

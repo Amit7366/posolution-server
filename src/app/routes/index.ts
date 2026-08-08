@@ -19,6 +19,7 @@ import { InvoiceRoutes } from '../Invoice/invoice.routes';
 import { SalesReturnRoutes } from '../SalesReturn/salesReturn.routes';
 import { DashboardRoutes } from '../Dashboard/dashboard.routes';
 import { PaymentRoutes } from '../Payment/payment.route';
+import { CustomerRoutes } from '../Customer/customer.routes';
 const router = Router();
 const moduleRoutes = [
   {
@@ -90,6 +91,10 @@ const moduleRoutes = [
   {
     path: "/invoice",
     route: InvoiceRoutes,
+  },
+  {
+    path: "/customer",
+    route: CustomerRoutes,
   },
   {
     path: "/sales-return",

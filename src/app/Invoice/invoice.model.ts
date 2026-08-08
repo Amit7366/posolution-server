@@ -51,6 +51,14 @@ const InvoiceSchema = new Schema<TInvoice, InvoiceModel>(
     dueDate: { type: Date, required: true },
 
     notes: { type: String, default: "" },
+    customerNote: { type: String, default: "" },
+    paymentType: {
+      type: String,
+      enum: ["cash", "card", "bkash", "nagad", "other"],
+      default: "cash",
+    },
+    cashAmount: { type: Number, default: 0, min: 0 },
+    changeAmount: { type: Number, default: 0, min: 0 },
     stockDeducted: { type: Boolean, default: false },
 
     isDeleted: { type: Boolean, default: false },
