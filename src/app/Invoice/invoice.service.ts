@@ -2,6 +2,7 @@ import httpStatus from "http-status";
 import mongoose, { ClientSession, Types } from "mongoose";
 import AppError from "../errors/AppError";
 import { Product } from "../Product/product.model";
+import { DueCollection } from "../DueCollection/dueCollection.model";
 import { Invoice } from "./invoice.model";
 import { TInvoiceItem, TInvoiceParty, TInvoiceStatus, TPaymentType } from "./invoice.interface";
 import { generateNextInvoiceNo } from "./invoice.utils";
@@ -128,8 +129,17 @@ async function restoreStock(
   }
 }
 
+function parseCustomerId(raw?: string | null): Types.ObjectId | undefined {
+  if (!raw || !String(raw).trim()) return undefined;
+  if (!Types.ObjectId.isValid(raw)) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Invalid customer id");
+  }
+  return new Types.ObjectId(raw);
+}
+
 type CreatePayload = {
   fromParty?: Partial<TInvoiceParty>;
+  customerId?: string;
   customerName: string;
   customerEmail?: string;
   customerPhone?: string;
@@ -140,6 +150,7 @@ type CreatePayload = {
   paid?: number;
   status: TInvoiceStatus;
   dueDate: string | Date;
+  hold?: boolean;
   notes?: string;
   customerNote?: string;
   paymentType?: TPaymentType;
@@ -157,11 +168,20 @@ export const InvoiceService = {
     );
 
     const paid = roundMoney(Math.max(0, Number(payload.paid ?? 0)));
-    let status: TInvoiceStatus = payload.status === "paid" ? "paid" : "unpaid";
+    if (paid > totalAmount) {
+      throw new AppError(httpStatus.BAD_REQUEST, "Paid amount cannot exceed total");
+    }
+
+    let status: TInvoiceStatus = "unpaid";
     if (paid >= totalAmount) status = "paid";
 
+    const hold = Boolean(payload.hold);
+    const shouldDeduct = !hold;
+
     const paymentType: TPaymentType = payload.paymentType ?? "cash";
-    const cashAmount = roundMoney(Math.max(0, Number(payload.cashAmount ?? (status === "paid" ? totalAmount : 0))));
+    const cashAmount = roundMoney(
+      Math.max(0, Number(payload.cashAmount ?? (status === "paid" ? totalAmount : paid)))
+    );
     const changeAmount = roundMoney(
       Math.max(
         0,
@@ -185,12 +205,14 @@ export const InvoiceService = {
       throw new AppError(httpStatus.BAD_REQUEST, "Invalid due date");
     }
 
+    const customerId = parseCustomerId(payload.customerId);
     const linesForStock = built.items.map((i) => ({ productId: i.productId, qty: i.qty }));
 
     const commonFields = {
       tenantId,
       invoiceNo,
       fromParty,
+      ...(customerId ? { customerId } : {}),
       customerName: payload.customerName.trim(),
       customerEmail: payload.customerEmail?.trim() ?? "",
       customerPhone: payload.customerPhone?.trim() ?? "",
@@ -205,6 +227,7 @@ export const InvoiceService = {
       paid,
       status,
       dueDate,
+      hold,
       notes: payload.notes?.trim() ?? "",
       customerNote: payload.customerNote?.trim() ?? "",
       paymentType,
@@ -213,7 +236,7 @@ export const InvoiceService = {
       createdBy: user?.objectId,
     };
 
-    if (status === "paid") {
+    if (shouldDeduct) {
       const session = await mongoose.startSession();
       try {
         await session.withTransaction(async () => {
@@ -249,10 +272,8 @@ export const InvoiceService = {
       page?: number;
       limit?: number;
       search?: string;
-      status?: "all" | "paid" | "unpaid" | "overdue";
-      /** ISO date — only invoices created on or after this instant */
+      status?: "all" | "paid" | "unpaid" | "overdue" | "due";
       since?: string;
-      /** Case-insensitive partial match on customer name */
       customer?: string;
     }
   ) {
@@ -267,9 +288,15 @@ export const InvoiceService = {
 
     if (opts.status === "paid") filter.status = "paid";
     else if (opts.status === "unpaid") filter.status = "unpaid";
-    else if (opts.status === "overdue") {
+    else if (opts.status === "due") {
       filter.status = "unpaid";
+      filter.hold = { $ne: true };
+      filter.$expr = { $gt: [{ $subtract: ["$totalAmount", "$paid"] }, 0] };
+    } else if (opts.status === "overdue") {
+      filter.status = "unpaid";
+      filter.hold = { $ne: true };
       filter.dueDate = { $lt: startOfToday };
+      filter.$expr = { $gt: [{ $subtract: ["$totalAmount", "$paid"] }, 0] };
     }
 
     if (opts.search?.trim()) {
@@ -278,6 +305,7 @@ export const InvoiceService = {
         { invoiceNo: rx },
         { customerName: rx },
         { customerEmail: rx },
+        { customerPhone: rx },
         { title: rx },
       ];
     }
@@ -295,7 +323,7 @@ export const InvoiceService = {
     }
 
     const [data, total] = await Promise.all([
-      Invoice.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Invoice.find(filter).sort({ dueDate: 1, createdAt: -1 }).skip(skip).limit(limit).lean(),
       Invoice.countDocuments(filter),
     ]);
 
@@ -309,6 +337,97 @@ export const InvoiceService = {
     const doc = await Invoice.findOne({ _id: id, tenantId }).lean();
     if (!doc) throw new AppError(httpStatus.NOT_FOUND, "Invoice not found");
     return doc;
+  },
+
+  async collectDueIntoDB(
+    id: string,
+    tenantId: string,
+    payload: { amount: number; paymentType?: TPaymentType; note?: string },
+    user: any
+  ) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new AppError(httpStatus.BAD_REQUEST, "Invalid invoice id");
+    }
+
+    const amount = roundMoney(Number(payload.amount));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new AppError(httpStatus.BAD_REQUEST, "Collection amount must be greater than 0");
+    }
+
+    const session = await mongoose.startSession();
+    let result: Record<string, unknown> | null = null;
+
+    try {
+      await session.withTransaction(async () => {
+        const existing = await Invoice.findOne({ _id: id, tenantId }).session(session);
+        if (!existing) throw new AppError(httpStatus.NOT_FOUND, "Invoice not found");
+        if (existing.hold) {
+          throw new AppError(httpStatus.BAD_REQUEST, "Cannot collect on a held sale — confirm it first");
+        }
+
+        const amountDue = roundMoney(existing.totalAmount - existing.paid);
+        if (amountDue <= 0) {
+          throw new AppError(httpStatus.BAD_REQUEST, "Invoice has no outstanding due");
+        }
+        if (amount > amountDue) {
+          throw new AppError(
+            httpStatus.BAD_REQUEST,
+            `Collection amount exceeds due (${amountDue})`
+          );
+        }
+
+        const paymentType: TPaymentType = payload.paymentType ?? "cash";
+        const nextPaid = roundMoney(existing.paid + amount);
+        const nextStatus: TInvoiceStatus = nextPaid >= existing.totalAmount ? "paid" : "unpaid";
+
+        await DueCollection.create(
+          [
+            {
+              tenantId,
+              invoiceId: existing._id,
+              amount,
+              paymentType,
+              note: payload.note?.trim() ?? "",
+              collectedAt: new Date(),
+              collectedBy: user?.objectId,
+            },
+          ],
+          { session }
+        );
+
+        existing.paid = nextPaid;
+        existing.status = nextStatus;
+        existing.updatedBy = user?.objectId;
+        await existing.save({ session });
+
+        result = {
+          invoice: existing.toObject(),
+          collection: {
+            amount,
+            paymentType,
+            note: payload.note?.trim() ?? "",
+            amountDue: roundMoney(existing.totalAmount - nextPaid),
+          },
+        };
+      });
+    } finally {
+      await session.endSession();
+    }
+
+    return result;
+  },
+
+  async getCollectionsFromDB(invoiceId: string, tenantId: string) {
+    if (!Types.ObjectId.isValid(invoiceId)) {
+      throw new AppError(httpStatus.BAD_REQUEST, "Invalid invoice id");
+    }
+    const inv = await Invoice.findOne({ _id: invoiceId, tenantId }).select("_id").lean();
+    if (!inv) throw new AppError(httpStatus.NOT_FOUND, "Invoice not found");
+
+    const data = await DueCollection.find({ tenantId, invoiceId })
+      .sort({ collectedAt: -1 })
+      .lean();
+    return data;
   },
 
   async updateIntoDB(id: string, tenantId: string, payload: Partial<CreatePayload> & { status?: TInvoiceStatus }, user: any) {
@@ -327,7 +446,7 @@ export const InvoiceService = {
 
     if (payload.items?.length) {
       if (existing.stockDeducted) {
-        throw new AppError(httpStatus.BAD_REQUEST, "Cannot change line items after stock was deducted (paid invoice)");
+        throw new AppError(httpStatus.BAD_REQUEST, "Cannot change line items after stock was deducted");
       }
       const built = await buildLineItems(tenantId, payload.items);
       const v = applyVat(built.subTotal, built.discountTotal, payload.vatPercent ?? existing.vatPercent);
@@ -344,6 +463,9 @@ export const InvoiceService = {
 
     let paid =
       payload.paid != null ? roundMoney(Math.max(0, Number(payload.paid))) : existing.paid;
+    if (paid > totalAmount) {
+      throw new AppError(httpStatus.BAD_REQUEST, "Paid amount cannot exceed total");
+    }
 
     let status: TInvoiceStatus =
       payload.status === "paid" || payload.status === "unpaid"
@@ -351,6 +473,10 @@ export const InvoiceService = {
         : existing.status;
 
     if (paid >= totalAmount) status = "paid";
+    else if (payload.status !== "paid") status = "unpaid";
+
+    const hold = payload.hold != null ? Boolean(payload.hold) : existing.hold;
+    const shouldHaveStock = !hold;
 
     const linesForStock = nextItems.map((i) => ({
       productId: i.productId as Types.ObjectId,
@@ -367,17 +493,16 @@ export const InvoiceService = {
       : existing.fromParty;
 
     let stockDeducted = existing.stockDeducted;
-
-    const becamePaid = status === "paid" && existing.status !== "paid";
-    const becameUnpaid = status === "unpaid" && existing.status === "paid";
+    const customerId =
+      payload.customerId !== undefined ? parseCustomerId(payload.customerId) : existing.customerId;
 
     const session = await mongoose.startSession();
     try {
       await session.withTransaction(async () => {
-        if (becamePaid && !stockDeducted) {
+        if (shouldHaveStock && !stockDeducted) {
           await deductStock(session, tenantId, linesForStock);
           stockDeducted = true;
-        } else if (becameUnpaid && stockDeducted) {
+        } else if (!shouldHaveStock && stockDeducted) {
           await restoreStock(session, tenantId, linesForStock);
           stockDeducted = false;
         }
@@ -393,6 +518,7 @@ export const InvoiceService = {
 
         existing.set({
           fromParty: nextFrom,
+          ...(customerId !== undefined ? { customerId: customerId ?? null } : {}),
           customerName: payload.customerName?.trim() ?? existing.customerName,
           customerEmail: payload.customerEmail?.trim() ?? existing.customerEmail,
           customerPhone: payload.customerPhone?.trim() ?? existing.customerPhone,
@@ -410,6 +536,7 @@ export const InvoiceService = {
           paid,
           status,
           dueDate: nextDue,
+          hold,
           notes: payload.notes?.trim() ?? existing.notes,
           stockDeducted,
           updatedBy: user?.objectId,

@@ -187,6 +187,7 @@ export const DashboardService = {
     const [
       invoiceAgg,
       outstandingAgg,
+      collectedAgg,
       retAgg,
       suppliers,
       products,
@@ -204,15 +205,28 @@ export const DashboardService = {
       monthSalesPrev,
       monthReturns,
       monthReturnsPrev,
+      monthCollected,
+      monthCollectedPrev,
       topCatAgg,
+      dueInvoiceDocs,
     ] = await Promise.all([
       Invoice.aggregate<{ totalSales: number }>([
         { $match: tenantInvoices(tenantId) },
         { $group: { _id: null, totalSales: { $sum: "$totalAmount" } } },
       ]),
       Invoice.aggregate<{ due: number }>([
-        { $match: { ...tenantInvoices(tenantId), status: "unpaid" } },
+        {
+          $match: {
+            ...tenantInvoices(tenantId),
+            status: "unpaid",
+            hold: { $ne: true },
+          },
+        },
         { $group: { _id: null, due: { $sum: { $subtract: ["$totalAmount", "$paid"] } } } },
+      ]),
+      Invoice.aggregate<{ collected: number }>([
+        { $match: tenantInvoices(tenantId) },
+        { $group: { _id: null, collected: { $sum: "$paid" } } },
       ]),
       SalesReturn.aggregate<{ totalReturn: number; totalPaid: number }>([
         { $match: tenantReturns(tenantId) },
@@ -332,6 +346,24 @@ export const DashboardService = {
         },
         { $group: { _id: null, s: { $sum: "$totalAmount" } } },
       ]),
+      Invoice.aggregate<{ s: number }>([
+        {
+          $match: {
+            ...tenantInvoices(tenantId),
+            createdAt: { $gte: startThisMonth },
+          },
+        },
+        { $group: { _id: null, s: { $sum: "$paid" } } },
+      ]),
+      Invoice.aggregate<{ s: number }>([
+        {
+          $match: {
+            ...tenantInvoices(tenantId),
+            createdAt: { $gte: startLastMonth, $lte: endLastMonth },
+          },
+        },
+        { $group: { _id: null, s: { $sum: "$paid" } } },
+      ]),
       Invoice.aggregate<{
         _id: mongoose.Types.ObjectId | null;
         name: string;
@@ -347,8 +379,7 @@ export const DashboardService = {
             as: "p",
           },
         },
-        { $unwind: "$p" },
-        { $match: { "p.tenantId": tenantId } },
+        { $unwind: { path: "$p", preserveNullAndEmptyArrays: true } },
         {
           $lookup: {
             from: "categories",
@@ -368,18 +399,31 @@ export const DashboardService = {
         { $sort: { revenue: -1 } },
         { $limit: 5 },
       ]),
+      Invoice.find({
+        ...tenantInvoices(tenantId),
+        status: "unpaid",
+        hold: { $ne: true },
+        $expr: { $gt: [{ $subtract: ["$totalAmount", "$paid"] }, 0] },
+      })
+        .sort({ dueDate: 1, createdAt: -1 })
+        .limit(8)
+        .select("invoiceNo customerName customerPhone totalAmount paid dueDate")
+        .lean(),
     ]);
 
     const totalSales = roundMoney(invoiceAgg[0]?.totalSales ?? 0);
     const totalSalesReturn = roundMoney(retAgg[0]?.totalReturn ?? 0);
     const totalPaymentReturns = roundMoney(retAgg[0]?.totalPaid ?? 0);
     const invoiceDue = roundMoney(outstandingAgg[0]?.due ?? 0);
+    const collectedIncome = roundMoney(collectedAgg[0]?.collected ?? 0);
     const profit = roundMoney(Math.max(0, totalSales - totalSalesReturn));
 
     const salesThisM = roundMoney(monthSales[0]?.s ?? 0);
     const salesPrevM = roundMoney(monthSalesPrev[0]?.s ?? 0);
     const retThisM = roundMoney(monthReturns[0]?.s ?? 0);
     const retPrevM = roundMoney(monthReturnsPrev[0]?.s ?? 0);
+    const collectedThisM = roundMoney(monthCollected[0]?.s ?? 0);
+    const collectedPrevM = roundMoney(monthCollectedPrev[0]?.s ?? 0);
 
     const co = customerAgg[0];
     const firstTime = co?.once ?? 0;
@@ -501,6 +545,32 @@ export const DashboardService = {
       revenue: roundMoney(c.revenue),
     }));
 
+    const dueInvoices = (
+      dueInvoiceDocs as {
+        _id: mongoose.Types.ObjectId;
+        invoiceNo: string;
+        customerName?: string;
+        customerPhone?: string;
+        totalAmount: number;
+        paid: number;
+        dueDate: Date;
+      }[]
+    ).map((inv) => {
+      const amountDue = roundMoney(Number(inv.totalAmount) - Number(inv.paid));
+      const dueMs = new Date(inv.dueDate).getTime();
+      return {
+        id: String(inv._id),
+        invoiceNo: String(inv.invoiceNo),
+        customerName: String(inv.customerName ?? ""),
+        customerPhone: String(inv.customerPhone ?? ""),
+        totalAmount: roundMoney(Number(inv.totalAmount)),
+        paid: roundMoney(Number(inv.paid)),
+        amountDue,
+        dueDate: new Date(inv.dueDate).toISOString(),
+        overdue: dueMs < startToday,
+      };
+    });
+
     return {
       totals: {
         totalSales,
@@ -508,6 +578,7 @@ export const DashboardService = {
         totalPurchase: 0,
         totalPurchaseReturn: 0,
         profit,
+        collectedIncome,
         invoiceDue,
         totalExpenses: 0,
         totalPaymentReturns,
@@ -519,6 +590,7 @@ export const DashboardService = {
           roundMoney(salesThisM - retThisM),
           roundMoney(salesPrevM - retPrevM)
         ),
+        collectedIncomePctVsLastMonth: pctChange(collectedThisM, collectedPrevM),
         invoiceDuePctVsLastMonth: null as number | null,
       },
       counts: {
@@ -536,6 +608,7 @@ export const DashboardService = {
       topProducts,
       lowStock,
       recentInvoices: recentInvoicesOut,
+      dueInvoices,
       topCustomers,
       topCategories,
       categoryStats: {

@@ -25,6 +25,7 @@ export type TInvoice = {
   tenantId: string;
   invoiceNo: string;
   fromParty: TInvoiceParty;
+  customerId?: Types.ObjectId;
   customerName: string;
   customerEmail: string;
   customerPhone: string;
@@ -39,6 +40,8 @@ export type TInvoice = {
   paid: number;
   status: TInvoiceStatus;
   dueDate: Date;
+  /** Parks sale without stock deduction */
+  hold: boolean;
   notes?: string;
   customerNote?: string;
   paymentType?: TPaymentType;

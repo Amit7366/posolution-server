@@ -23,7 +23,7 @@ export const InvoiceController = {
       page: q.page ? Number(q.page) : undefined,
       limit: q.limit ? Number(q.limit) : undefined,
       search: q.search,
-      status: (q.status as "all" | "paid" | "unpaid" | "overdue") || "all",
+      status: (q.status as "all" | "paid" | "unpaid" | "overdue" | "due") || "all",
       since: q.since,
       customer: q.customer,
     });
@@ -54,6 +54,33 @@ export const InvoiceController = {
       statusCode: httpStatus.OK,
       success: true,
       message: "Invoice updated",
+      data: result,
+    });
+  }),
+
+  collect: catchAsync(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    const result = await InvoiceService.collectDueIntoDB(
+      req.params.id,
+      tenantId,
+      req.body,
+      req.user
+    );
+    sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: "Due collected",
+      data: result,
+    });
+  }),
+
+  getCollections: catchAsync(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    const result = await InvoiceService.getCollectionsFromDB(req.params.id, tenantId);
+    sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: "Due collections",
       data: result,
     });
   }),

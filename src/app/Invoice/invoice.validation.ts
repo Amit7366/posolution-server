@@ -19,6 +19,7 @@ const lineItemSchema = z.object({
 export const createInvoiceSchema = z.object({
   body: z.object({
     fromParty: partySchema,
+    customerId: z.string().optional(),
     customerName: z.string().min(1, "Customer name is required"),
     customerEmail: z.string().optional(),
     customerPhone: z.string().optional(),
@@ -29,6 +30,7 @@ export const createInvoiceSchema = z.object({
     paid: z.coerce.number().min(0).optional(),
     status: z.enum(["unpaid", "paid"]),
     dueDate: z.string().min(1),
+    hold: z.coerce.boolean().optional(),
     notes: z.string().optional(),
     customerNote: z.string().optional(),
     paymentType: z.enum(["cash", "card", "bkash", "nagad", "other"]).optional(),
@@ -43,6 +45,7 @@ export const updateInvoiceSchema = z.object({
   }),
   body: z.object({
     fromParty: partySchema,
+    customerId: z.string().optional(),
     customerName: z.string().min(1).optional(),
     customerEmail: z.string().optional(),
     customerPhone: z.string().optional(),
@@ -53,11 +56,23 @@ export const updateInvoiceSchema = z.object({
     paid: z.coerce.number().min(0).optional(),
     status: z.enum(["unpaid", "paid"]).optional(),
     dueDate: z.string().optional(),
+    hold: z.coerce.boolean().optional(),
     notes: z.string().optional(),
     customerNote: z.string().optional(),
     paymentType: z.enum(["cash", "card", "bkash", "nagad", "other"]).optional(),
     cashAmount: z.coerce.number().min(0).optional(),
     changeAmount: z.coerce.number().min(0).optional(),
+  }),
+});
+
+export const collectDueSchema = z.object({
+  params: z.object({
+    id: z.string().min(1),
+  }),
+  body: z.object({
+    amount: z.coerce.number().positive(),
+    paymentType: z.enum(["cash", "card", "bkash", "nagad", "other"]).optional(),
+    note: z.string().optional(),
   }),
 });
 
@@ -72,7 +87,7 @@ export const getInvoiceListQuerySchema = z.object({
     page: z.coerce.number().optional(),
     limit: z.coerce.number().optional(),
     search: z.string().optional(),
-    status: z.enum(["all", "paid", "unpaid", "overdue"]).optional(),
+    status: z.enum(["all", "paid", "unpaid", "overdue", "due"]).optional(),
     since: z.string().optional(),
     customer: z.string().optional(),
   }),

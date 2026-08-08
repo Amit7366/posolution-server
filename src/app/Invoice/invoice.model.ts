@@ -31,6 +31,7 @@ const InvoiceSchema = new Schema<TInvoice, InvoiceModel>(
 
     fromParty: { type: PartySchema, default: () => ({}) },
 
+    customerId: { type: Schema.Types.ObjectId, ref: "Customer", default: null },
     customerName: { type: String, required: true, trim: true },
     customerEmail: { type: String, default: "" },
     customerPhone: { type: String, default: "" },
@@ -49,6 +50,7 @@ const InvoiceSchema = new Schema<TInvoice, InvoiceModel>(
 
     status: { type: String, enum: ["unpaid", "paid"], default: "unpaid" },
     dueDate: { type: Date, required: true },
+    hold: { type: Boolean, default: false },
 
     notes: { type: String, default: "" },
     customerNote: { type: String, default: "" },
