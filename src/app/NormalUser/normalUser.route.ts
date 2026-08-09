@@ -6,6 +6,18 @@ import { NormalUserControllers } from './normalUser.controller';
 import { updateNormalUserValidationSchema } from './normalUser.validation';
 
 const router = express.Router();
+
+router.get(
+  '/me',
+  auth(
+    USER_ROLE.superAdmin,
+    USER_ROLE.admin,
+    USER_ROLE.user,
+    USER_ROLE.advertiser,
+  ),
+  NormalUserControllers.getMyNormalUser,
+);
+
 router.get(
   '/',
   auth(USER_ROLE.superAdmin, USER_ROLE.admin),
@@ -14,20 +26,25 @@ router.get(
 
 router.get(
   '/:id',
-  auth(USER_ROLE.superAdmin, USER_ROLE.admin,USER_ROLE.user,USER_ROLE.advertiser),
+  auth(
+    USER_ROLE.superAdmin,
+    USER_ROLE.admin,
+    USER_ROLE.user,
+    USER_ROLE.advertiser,
+  ),
   NormalUserControllers.getSingleNormalUser,
 );
 
 router.patch(
   '/:userId',
-  auth(USER_ROLE.superAdmin,USER_ROLE.admin,USER_ROLE.user),
+  auth(USER_ROLE.superAdmin, USER_ROLE.admin, USER_ROLE.user),
   validateRequest(updateNormalUserValidationSchema),
   NormalUserControllers.updateNormalUser,
 );
 
 router.delete(
   '/:id',
-  auth(USER_ROLE.superAdmin,USER_ROLE.admin),
+  auth(USER_ROLE.superAdmin, USER_ROLE.admin),
   NormalUserControllers.deleteNormalUser,
 );
 

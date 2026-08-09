@@ -31,28 +31,51 @@ const getAllNormalUsersFromDB = async (query: Record<string, unknown>) => {
 };
 
 const getSingleNormalUserFromDB = async (id: string) => {
-  const result = await NormalUser.findOne({ user: id });
+  const result = await NormalUser.findOne({ user: id, isDeleted: false });
   return result;
 };
+
+const getMyNormalUserFromDB = async (userObjectId: string) => {
+  if (!mongoose.Types.ObjectId.isValid(userObjectId)) {
+    throw new AppError(httpStatus.BAD_REQUEST, 'Invalid user ID format');
+  }
+
+  const result = await NormalUser.findOne({
+    user: new mongoose.Types.ObjectId(userObjectId),
+    isDeleted: false,
+  }).populate({
+    path: 'user',
+    select: 'username email role tenantId',
+  });
+
+  if (!result) {
+    throw new AppError(httpStatus.NOT_FOUND, 'Profile not found');
+  }
+
+  return result;
+};
+
 const updateNormalUserIntoDB = async (
   userId: string,
   payload: Partial<TNormalUser>,
 ) => {
   if (!mongoose.Types.ObjectId.isValid(userId)) {
-    throw new Error('Invalid user ID format');
+    throw new AppError(httpStatus.BAD_REQUEST, 'Invalid user ID format');
   }
-  // Convert `userId` to an `ObjectId` for querying by the `user` field
   const userObjectId = new mongoose.Types.ObjectId(userId);
 
-  // Find the user by the `user` field and update
   const result = await NormalUser.findOneAndUpdate(
-    { user: userObjectId }, // Match based on `user` field with `ObjectId`
+    { user: userObjectId, isDeleted: false },
     payload,
     {
       new: true,
       runValidators: true,
-    }
+    },
   );
+
+  if (!result) {
+    throw new AppError(httpStatus.NOT_FOUND, 'Profile not found');
+  }
 
   return result;
 };
@@ -99,6 +122,7 @@ const deleteNormalUserFromDB = async (id: string) => {
 export const NormalUserServices = {
   getAllNormalUsersFromDB,
   getSingleNormalUserFromDB,
+  getMyNormalUserFromDB,
   updateNormalUserIntoDB,
   deleteNormalUserFromDB,
 };

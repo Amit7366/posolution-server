@@ -16,7 +16,7 @@ const userSchema = new Schema<TUser, UserModel>(
     },
 
 
-    username: { type: String },
+    username: { type: String, unique: true, sparse: true },
     referralId: { type: String, unique: true, sparse: true },
     referredBy: { type: String, default: null },
     refferCount: {
@@ -120,6 +120,11 @@ userSchema.statics.isUserExistsByEmail = async function (email: string) {
   const user = await this.findOne({ email }).select('+password');
   console.log('Result:', user);
   return user;
+};
+
+userSchema.statics.isUserExistsByUsername = async function (username: string) {
+  const normalized = String(username || '').trim().toLowerCase();
+  return await this.findOne({ username: normalized }).select('+password');
 };
 userSchema.statics.isPasswordMatched = async function (
   plainTextPassword,

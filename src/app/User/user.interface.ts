@@ -43,6 +43,7 @@ export interface UserModel extends Model<TUser> {
   //instance methods for checking if the user exist
   isUserExistsByCustomId(id: string): Promise<TUser>;
   isUserExistsByEmail(email: string): Promise<TUser>;
+  isUserExistsByUsername(username: string): Promise<TUser>;
   //instance methods for checking if passwords are matched
   isPasswordMatched(
     plainTextPassword: string,

@@ -11,15 +11,31 @@ import config from '../config';
 import { createToken, verifyToken } from './auth.utils';
 import { sendEmail } from '../utilis/sendEmail';
 import { NormalUser } from '../NormalUser/normalUser.model';
+import { normalizeBdPhone } from '../utilis/phone';
 
 const loginUser = async (
   payload: TLoginUser & { ip: string; deviceName: string },
 ) => {
   console.log('Login payload:', payload);
 
-  const user = payload.id
-    ? await User.isUserExistsByCustomId(payload.id)
-    : await User.isUserExistsByEmail(payload.email);
+  let user = null;
+
+  if (payload.email) {
+    user = await User.isUserExistsByEmail(payload.email);
+  } else if (payload.username) {
+    user = await User.isUserExistsByUsername(payload.username);
+  } else if (payload.contactNo) {
+    const phone = normalizeBdPhone(payload.contactNo);
+    const normalUser = await NormalUser.findOne({ contactNo: phone });
+    if (normalUser?.user) {
+      user = await User.findById(normalUser.user).select('+password');
+    }
+    if (!user && normalUser?.email) {
+      user = await User.isUserExistsByEmail(normalUser.email);
+    }
+  } else if (payload.id) {
+    user = await User.isUserExistsByCustomId(payload.id);
+  }
 
   console.log('from login', user);
 

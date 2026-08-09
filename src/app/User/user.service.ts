@@ -21,17 +21,32 @@ import { NormalUser } from '../NormalUser/normalUser.model';
 import { VerificationToken } from './VerificationToken.model';
 import { sendVerificationEmail } from './emailService';
 import { TNormalUser } from '../NormalUser/normalUser.interface';
+import { normalizeBdPhone, isValidBdPhone } from '../utilis/phone';
 
 const createUserIntoDb = async (
   file: any,
   password: string,
-  payload: TNormalUser,
+  payload: TNormalUser & { userName?: string; username?: string },
 ) => {
   const userData: Partial<TUser> = {};
   userData.password = password || 'defaultPassword';
   userData.role = 'user';
   userData.isDeleted = false;
   userData.email = payload.email;
+
+  const rawUsername = (payload.userName || payload.username || '').trim();
+  if (!rawUsername || rawUsername.length < 3) {
+    throw new AppError(httpStatus.BAD_REQUEST, 'Username is required');
+  }
+  userData.username = rawUsername.toLowerCase();
+
+  if (!payload.contactNo || !isValidBdPhone(payload.contactNo)) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      'Enter a valid Bangladesh mobile number',
+    );
+  }
+  payload.contactNo = normalizeBdPhone(payload.contactNo);
 
   // ✅ NEW: generate tenantId from last user (t-0002 -> t-0003 -> ...)
   userData.tenantId = payload.tenantId ?? (await generateTenantIdFromUsers());
@@ -42,6 +57,20 @@ const createUserIntoDb = async (
   const session = await mongoose.startSession();
   try {
     session.startTransaction();
+
+    const existingUsername = await User.findOne({
+      username: userData.username,
+    }).session(session);
+    if (existingUsername) {
+      throw new AppError(httpStatus.CONFLICT, 'Username already exists');
+    }
+
+    const existingPhone = await NormalUser.findOne({
+      contactNo: payload.contactNo,
+    }).session(session);
+    if (existingPhone) {
+      throw new AppError(httpStatus.CONFLICT, 'Phone number already exists');
+    }
 
     // Generate unique ID and referral ID
     userData.id = await generateid();
@@ -78,16 +107,6 @@ const createUserIntoDb = async (
     // Set referredBy field in userData
     userData.referredBy = payload.referredBy;
 
-    // Check if the device fingerprint is already registered
-    // const existingUserByFingerprint = await NormalUser.findOne({ deviceFingerprint: payload.deviceFingerprint }).session(session);
-
-    // if (existingUserByFingerprint) {
-    //   throw new AppError(httpStatus.CONFLICT, 'This device is already associated with an account.');
-    // }
-
-    // // Ensure the fingerprint is added to the payload
-    // payload.deviceFingerprint = payload.deviceFingerprint;
-
     // Handle image upload if file is provided
     if (file) {
       const imageName = `${userData.id}${payload?.name || 'default'}`;
@@ -101,6 +120,13 @@ const createUserIntoDb = async (
       payload.profileImg = secure_url as string;
     }
 
+    // Strip fields that don't belong on NormalUser schema
+    const {
+      userName: _userName,
+      username: _username,
+      ...normalUserPayload
+    } = payload as TNormalUser & { userName?: string; username?: string };
+
     // ✅ NEW: retry loop to avoid duplicate tenantId collision under concurrent requests
     let newUser: any[] = [];
     let newNormalUser: any[] = [];
@@ -110,7 +136,7 @@ const createUserIntoDb = async (
         // On retry, regenerate tenantId
         if (attempt > 0) {
           userData.tenantId = await generateTenantIdFromUsers();
-          payload.tenantId = userData.tenantId;
+          normalUserPayload.tenantId = userData.tenantId;
         }
 
         // Create User document
@@ -118,11 +144,11 @@ const createUserIntoDb = async (
         if (!newUser.length) throw new AppError(httpStatus.BAD_REQUEST, 'Failed to create User');
 
         // Create NormalUser document
-        payload.id = newUser[0].id;
-        payload.user = newUser[0]._id;
-        payload.refferCount = 0; // Initialize new user's refferCount to 0
+        normalUserPayload.id = newUser[0].id;
+        normalUserPayload.user = newUser[0]._id;
+        normalUserPayload.refferCount = 0;
 
-        newNormalUser = await NormalUser.create([payload], { session });
+        newNormalUser = await NormalUser.create([normalUserPayload], { session });
         if (!newNormalUser.length) throw new AppError(httpStatus.BAD_REQUEST, 'Failed to create NormalUser');
 
         break; // ✅ success
@@ -160,10 +186,21 @@ const createUserIntoDb = async (
     await session.abortTransaction();
     await session.endSession();
 
-    if (err.code === 11000 && err.keyPattern.email) {
+    if (err instanceof AppError) {
+      throw err;
+    }
+
+    if (err.code === 11000 && err.keyPattern?.email) {
       throw new AppError(httpStatus.CONFLICT, 'Email already exists');
-    } else if (err.message.includes('device')) {
-      throw new AppError(httpStatus.CONFLICT, err.message); // Specific error for device conflict
+    }
+    if (err.code === 11000 && err.keyPattern?.username) {
+      throw new AppError(httpStatus.CONFLICT, 'Username already exists');
+    }
+    if (err.code === 11000 && err.keyPattern?.contactNo) {
+      throw new AppError(httpStatus.CONFLICT, 'Phone number already exists');
+    }
+    if (err.message?.includes('device')) {
+      throw new AppError(httpStatus.CONFLICT, err.message);
     }
 
     console.error('Unexpected error during user creation:', err);

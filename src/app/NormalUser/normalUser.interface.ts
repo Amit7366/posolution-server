@@ -27,7 +27,7 @@ export type TNormalUser = {
   dateOfBirth?: Date;
   tenantId?: string;
   email: string;
-  contactNo?: string;
+  contactNo: string;
   emergencyContactNo?: string;
   bloodGroup?: TBloodGroup;
   state?: string;

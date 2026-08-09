@@ -66,7 +66,12 @@ const NormalUserSchema = new Schema<TNormalUser, NormalUserModel>(
     },
    tenantId: { type: String, required: true, unique: true, index: true },
 
-    contactNo: { type: String },
+    contactNo: {
+      type: String,
+      required: [true, 'Phone number is required'],
+      unique: true,
+      sparse: true,
+    },
     emergencyContactNo: {
       type: String,
     },

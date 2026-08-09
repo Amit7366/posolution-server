@@ -2,7 +2,25 @@ import httpStatus from 'http-status';
 
 import catchAsync from '../utilis/catchAsync';
 import sendResponse from '../utilis/sendResponse';
+import AppError from '../errors/AppError';
 import { NormalUserServices } from './normalUser.service';
+import { USER_ROLE } from '../User/user.constant';
+
+const getMyNormalUser = catchAsync(async (req, res) => {
+  const objectId = req.user?.objectId?.toString();
+  if (!objectId) {
+    throw new AppError(httpStatus.UNAUTHORIZED, 'Unauthorized');
+  }
+
+  const result = await NormalUserServices.getMyNormalUserFromDB(objectId);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: 'Profile retrieved successfully',
+    data: result,
+  });
+});
 
 const getSingleNormalUser = catchAsync(async (req, res) => {
   const { id } = req.params;
@@ -32,8 +50,22 @@ const updateNormalUser = catchAsync(async (req, res) => {
   const { userId } = req.params;
   const { normalUser } = req.body;
 
-  // Call the service to update the user
-  const result = await NormalUserServices.updateNormalUserIntoDB(userId, normalUser);
+  const requesterId = req.user?.objectId?.toString();
+  const role = req.user?.role;
+  const isPrivileged =
+    role === USER_ROLE.superAdmin || role === USER_ROLE.admin;
+
+  if (!isPrivileged && requesterId !== userId) {
+    throw new AppError(
+      httpStatus.FORBIDDEN,
+      'You can only update your own profile',
+    );
+  }
+
+  const result = await NormalUserServices.updateNormalUserIntoDB(
+    userId,
+    normalUser,
+  );
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -56,6 +88,7 @@ const deleteNormalUser = catchAsync(async (req, res) => {
 });
 
 export const NormalUserControllers = {
+  getMyNormalUser,
   getAllNormalUsers,
   getSingleNormalUser,
   deleteNormalUser,

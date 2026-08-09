@@ -4,7 +4,9 @@
 //   password: string;
 // };
 export type TLoginUser = {
-  id: string;
-  email:string;
+  id?: string;
+  email?: string;
+  username?: string;
+  contactNo?: string;
   password: string;
 };
