@@ -3,7 +3,10 @@ import auth from "../middleware/auth";
 import validateRequest from "../middleware/validateRequest";
 import { USER_ROLE } from "../User/user.constant";
 import { DashboardController } from "./dashboard.controller";
-import { dashboardSummaryQuerySchema } from "./dashboard.validation";
+import {
+  dashboardProfitLossQuerySchema,
+  dashboardSummaryQuerySchema,
+} from "./dashboard.validation";
 
 const router = Router();
 
@@ -14,6 +17,13 @@ router.get(
   auth(...readers),
   validateRequest(dashboardSummaryQuerySchema),
   DashboardController.summary
+);
+
+router.get(
+  "/profit-loss",
+  auth(...readers),
+  validateRequest(dashboardProfitLossQuerySchema),
+  DashboardController.profitLoss
 );
 
 export const DashboardRoutes = router;

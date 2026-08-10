@@ -1,11 +1,18 @@
 import mongoose from "mongoose";
+import httpStatus from "http-status";
+import AppError from "../errors/AppError";
 import { Invoice } from "../Invoice/invoice.model";
 import { SalesReturn } from "../SalesReturn/salesReturn.model";
+import { Purchase } from "../Purchase/purchase.model";
+import { PurchaseReturn } from "../PurchaseReturn/purchaseReturn.model";
 import { Product } from "../Product/product.model";
 import { Supplier } from "../Supplier/supplier.model";
 import { Category } from "../Category/category.model";
 
 const roundMoney = (n: number) => Math.round(n * 100) / 100;
+
+export type ChartRange = "1D" | "1W" | "1M" | "3M" | "6M" | "1Y";
+export type ProfitLossPreset = "1D" | "3D" | "7D" | "1M" | "1Y" | "custom";
 
 const tenantInvoices = (tenantId: string) => ({
   tenantId,
@@ -13,6 +20,16 @@ const tenantInvoices = (tenantId: string) => ({
 });
 
 const tenantReturns = (tenantId: string) => ({
+  tenantId,
+  isDeleted: { $ne: true },
+});
+
+const tenantPurchases = (tenantId: string) => ({
+  tenantId,
+  isDeleted: { $ne: true },
+});
+
+const tenantPurchaseReturns = (tenantId: string) => ({
   tenantId,
   isDeleted: { $ne: true },
 });
@@ -33,22 +50,96 @@ function dayToCol(getDay: number) {
   return getDay === 0 ? 6 : getDay - 1;
 }
 
-export type ChartRange = "1D" | "1W" | "1M" | "3M" | "6M" | "1Y";
+function endOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(23, 59, 59, 999);
+  return x;
+}
+
+function resolveProfitLossRange(
+  preset: ProfitLossPreset,
+  fromStr?: string,
+  toStr?: string
+): { from: Date; to: Date; label: string } {
+  const now = new Date();
+  const todayStart = startOfDay(now);
+  const todayEnd = endOfDay(now);
+
+  if (preset === "custom") {
+    if (!fromStr || !toStr) {
+      throw new AppError(httpStatus.BAD_REQUEST, "Custom range requires from and to dates");
+    }
+    const from = startOfDay(new Date(fromStr));
+    const to = endOfDay(new Date(toStr));
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      throw new AppError(httpStatus.BAD_REQUEST, "Invalid custom date range");
+    }
+    if (from > to) {
+      throw new AppError(httpStatus.BAD_REQUEST, "`from` must be before `to`");
+    }
+    return {
+      from,
+      to,
+      label: `${from.toISOString().slice(0, 10)} → ${to.toISOString().slice(0, 10)}`,
+    };
+  }
+
+  if (preset === "1D") {
+    return { from: todayStart, to: todayEnd, label: "Today" };
+  }
+
+  if (preset === "3D") {
+    const from = new Date(todayStart);
+    from.setDate(from.getDate() - 2);
+    return { from, to: todayEnd, label: "Last 3 days" };
+  }
+
+  if (preset === "7D") {
+    const from = new Date(todayStart);
+    from.setDate(from.getDate() - 6);
+    return { from, to: todayEnd, label: "Last 7 days" };
+  }
+
+  if (preset === "1M") {
+    const from = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { from: startOfDay(from), to: todayEnd, label: "This month" };
+  }
+
+  const from = new Date(now.getFullYear(), 0, 1);
+  return { from: startOfDay(from), to: todayEnd, label: "This year" };
+}
 
 async function buildChartPoints(tenantId: string, range: ChartRange) {
   const now = new Date();
-  const purchase = 0;
 
-  if (range === "1D") {
-    const dayStart = startOfDay(now);
-    const agg = await Invoice.aggregate<{ _id: number; sales: number }>([
+  async function salesByHour(dayStart: Date) {
+    return Invoice.aggregate<{ _id: number; sales: number }>([
       { $match: { ...tenantInvoices(tenantId), createdAt: { $gte: dayStart, $lte: now } } },
       { $group: { _id: { $hour: "$createdAt" }, sales: { $sum: "$totalAmount" } } },
     ]);
-    const byHour = new Map(agg.map((a) => [a._id, roundMoney(a.sales)]));
+  }
+
+  async function purchasesByHour(dayStart: Date) {
+    return Purchase.aggregate<{ _id: number; purchase: number }>([
+      { $match: { ...tenantPurchases(tenantId), createdAt: { $gte: dayStart, $lte: now } } },
+      { $group: { _id: { $hour: "$createdAt" }, purchase: { $sum: "$totalAmount" } } },
+    ]);
+  }
+
+  if (range === "1D") {
+    const dayStart = startOfDay(now);
+    const [salesAgg, purchaseAgg] = await Promise.all([
+      salesByHour(dayStart),
+      purchasesByHour(dayStart),
+    ]);
+    const byHourSales = new Map(salesAgg.map((a) => [a._id, roundMoney(a.sales)]));
+    const byHourPurchase = new Map(purchaseAgg.map((a) => [a._id, roundMoney(a.purchase)]));
     const points: { label: string; sales: number; purchase: number }[] = [];
     for (let h = 0; h < 24; h += 2) {
-      const sales = roundMoney((byHour.get(h) ?? 0) + (byHour.get(h + 1) ?? 0));
+      const sales = roundMoney((byHourSales.get(h) ?? 0) + (byHourSales.get(h + 1) ?? 0));
+      const purchase = roundMoney(
+        (byHourPurchase.get(h) ?? 0) + (byHourPurchase.get(h + 1) ?? 0)
+      );
       const h12 = h % 12 === 0 ? 12 : h % 12;
       const suffix = h < 12 ? "am" : "pm";
       points.push({ label: `${h12} ${suffix}`, sales, purchase });
@@ -89,62 +180,124 @@ async function buildChartPoints(tenantId: string, range: ChartRange) {
     d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
   if (bucket === "day") {
-    const agg = await Invoice.aggregate<{ _id: string; sales: number }>([
-      { $match: { ...tenantInvoices(tenantId), createdAt: { $gte: start, $lte: now } } },
-      {
-        $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-          sales: { $sum: "$totalAmount" },
+    const [salesAgg, purchaseAgg] = await Promise.all([
+      Invoice.aggregate<{ _id: string; sales: number }>([
+        { $match: { ...tenantInvoices(tenantId), createdAt: { $gte: start, $lte: now } } },
+        {
+          $group: {
+            _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+            sales: { $sum: "$totalAmount" },
+          },
         },
-      },
-      { $sort: { _id: 1 } },
+        { $sort: { _id: 1 } },
+      ]),
+      Purchase.aggregate<{ _id: string; purchase: number }>([
+        { $match: { ...tenantPurchases(tenantId), createdAt: { $gte: start, $lte: now } } },
+        {
+          $group: {
+            _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+            purchase: { $sum: "$totalAmount" },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]),
     ]);
-    const map = new Map(agg.map((a) => [a._id, roundMoney(a.sales)]));
+    const salesMap = new Map(salesAgg.map((a) => [a._id, roundMoney(a.sales)]));
+    const purchaseMap = new Map(purchaseAgg.map((a) => [a._id, roundMoney(a.purchase)]));
     const points: { label: string; sales: number; purchase: number }[] = [];
     const endMs = startOfDay(now).getTime();
     for (let t = start.getTime(); t <= endMs; t += 86400000) {
       const d = new Date(t);
       const key = d.toISOString().slice(0, 10);
-      points.push({ label: formatDay(d), sales: map.get(key) ?? 0, purchase });
+      points.push({
+        label: formatDay(d),
+        sales: salesMap.get(key) ?? 0,
+        purchase: purchaseMap.get(key) ?? 0,
+      });
     }
     return points;
   }
 
   if (bucket === "week") {
-    const agg = await Invoice.aggregate<{ _id: { y: number; w: number }; sales: number }>([
+    const [salesAgg, purchaseAgg] = await Promise.all([
+      Invoice.aggregate<{ _id: { y: number; w: number }; sales: number }>([
+        { $match: { ...tenantInvoices(tenantId), createdAt: { $gte: start, $lte: now } } },
+        {
+          $group: {
+            _id: {
+              y: { $isoWeekYear: "$createdAt" },
+              w: { $isoWeek: "$createdAt" },
+            },
+            sales: { $sum: "$totalAmount" },
+          },
+        },
+        { $sort: { "_id.y": 1, "_id.w": 1 } },
+      ]),
+      Purchase.aggregate<{ _id: { y: number; w: number }; purchase: number }>([
+        { $match: { ...tenantPurchases(tenantId), createdAt: { $gte: start, $lte: now } } },
+        {
+          $group: {
+            _id: {
+              y: { $isoWeekYear: "$createdAt" },
+              w: { $isoWeek: "$createdAt" },
+            },
+            purchase: { $sum: "$totalAmount" },
+          },
+        },
+        { $sort: { "_id.y": 1, "_id.w": 1 } },
+      ]),
+    ]);
+    const purchaseMap = new Map(
+      purchaseAgg.map((a) => [`${a._id.y}-${a._id.w}`, roundMoney(a.purchase)])
+    );
+    const keys = new Set([
+      ...salesAgg.map((a) => `${a._id.y}-${a._id.w}`),
+      ...purchaseAgg.map((a) => `${a._id.y}-${a._id.w}`),
+    ]);
+    const salesMap = new Map(
+      salesAgg.map((a) => [`${a._id.y}-${a._id.w}`, roundMoney(a.sales)])
+    );
+    return [...keys]
+      .sort()
+      .map((key) => {
+        const [, w] = key.split("-");
+        return {
+          label: `W${w}`,
+          sales: salesMap.get(key) ?? 0,
+          purchase: purchaseMap.get(key) ?? 0,
+        };
+      });
+  }
+
+  const [salesAgg, purchaseAgg] = await Promise.all([
+    Invoice.aggregate<{ _id: string; sales: number }>([
       { $match: { ...tenantInvoices(tenantId), createdAt: { $gte: start, $lte: now } } },
       {
         $group: {
-          _id: {
-            y: { $isoWeekYear: "$createdAt" },
-            w: { $isoWeek: "$createdAt" },
-          },
+          _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
           sales: { $sum: "$totalAmount" },
         },
       },
-      { $sort: { "_id.y": 1, "_id.w": 1 } },
-    ]);
-    return agg.map((a) => ({
-      label: `W${a._id.w}`,
-      sales: roundMoney(a.sales),
-      purchase,
-    }));
-  }
-
-  const agg = await Invoice.aggregate<{ _id: string; sales: number }>([
-    { $match: { ...tenantInvoices(tenantId), createdAt: { $gte: start, $lte: now } } },
-    {
-      $group: {
-        _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
-        sales: { $sum: "$totalAmount" },
+      { $sort: { _id: 1 } },
+    ]),
+    Purchase.aggregate<{ _id: string; purchase: number }>([
+      { $match: { ...tenantPurchases(tenantId), createdAt: { $gte: start, $lte: now } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+          purchase: { $sum: "$totalAmount" },
+        },
       },
-    },
-    { $sort: { _id: 1 } },
+      { $sort: { _id: 1 } },
+    ]),
   ]);
-  return agg.map((a) => ({
-    label: a._id,
-    sales: roundMoney(a.sales),
-    purchase,
+  const salesMap = new Map(salesAgg.map((a) => [a._id, roundMoney(a.sales)]));
+  const purchaseMap = new Map(purchaseAgg.map((a) => [a._id, roundMoney(a.purchase)]));
+  const keys = [...new Set([...salesMap.keys(), ...purchaseMap.keys()])].sort();
+  return keys.map((key) => ({
+    label: key,
+    sales: salesMap.get(key) ?? 0,
+    purchase: purchaseMap.get(key) ?? 0,
   }));
 }
 
@@ -209,6 +362,9 @@ export const DashboardService = {
       monthCollectedPrev,
       topCatAgg,
       dueInvoiceDocs,
+      purchaseAgg,
+      purchaseReturnAgg,
+      duePurchaseDocs,
     ] = await Promise.all([
       Invoice.aggregate<{ totalSales: number }>([
         { $match: tenantInvoices(tenantId) },
@@ -436,11 +592,31 @@ export const DashboardService = {
         .limit(8)
         .select("invoiceNo customerName customerPhone totalAmount paid dueDate")
         .lean(),
+      Purchase.aggregate<{ totalPurchase: number }>([
+        { $match: tenantPurchases(tenantId) },
+        { $group: { _id: null, totalPurchase: { $sum: "$totalAmount" } } },
+      ]),
+      PurchaseReturn.aggregate<{ totalReturn: number }>([
+        { $match: tenantPurchaseReturns(tenantId) },
+        { $group: { _id: null, totalReturn: { $sum: "$totalAmount" } } },
+      ]),
+      Purchase.find({
+        ...tenantPurchases(tenantId),
+        status: "unpaid",
+        hold: { $ne: true },
+        $expr: { $gt: [{ $subtract: ["$totalAmount", "$paid"] }, 0] },
+      })
+        .sort({ dueDate: 1, createdAt: -1 })
+        .limit(8)
+        .select("purchaseNo supplierName supplierPhone totalAmount paid dueDate")
+        .lean(),
     ]);
 
     const totalSales = roundMoney(invoiceAgg[0]?.totalSales ?? 0);
     const totalSalesReturn = roundMoney(retAgg[0]?.totalReturn ?? 0);
     const totalPaymentReturns = roundMoney(retAgg[0]?.totalPaid ?? 0);
+    const totalPurchase = roundMoney(purchaseAgg[0]?.totalPurchase ?? 0);
+    const totalPurchaseReturn = roundMoney(purchaseReturnAgg[0]?.totalReturn ?? 0);
     const invoiceDue = roundMoney(outstandingAgg[0]?.due ?? 0);
     const collectedIncome = roundMoney(collectedAgg[0]?.collected ?? 0);
     const profit = roundMoney(Math.max(0, totalSales - totalSalesReturn));
@@ -605,12 +781,38 @@ export const DashboardService = {
       };
     });
 
+    const duePurchases = (
+      duePurchaseDocs as {
+        _id: mongoose.Types.ObjectId;
+        purchaseNo: string;
+        supplierName?: string;
+        supplierPhone?: string;
+        totalAmount: number;
+        paid: number;
+        dueDate: Date;
+      }[]
+    ).map((p) => {
+      const amountDue = roundMoney(Number(p.totalAmount) - Number(p.paid));
+      const dueMs = new Date(p.dueDate).getTime();
+      return {
+        id: String(p._id),
+        purchaseNo: String(p.purchaseNo),
+        supplierName: String(p.supplierName ?? ""),
+        supplierPhone: String(p.supplierPhone ?? ""),
+        totalAmount: roundMoney(Number(p.totalAmount)),
+        paid: roundMoney(Number(p.paid)),
+        amountDue,
+        dueDate: new Date(p.dueDate).toISOString(),
+        overdue: dueMs < startToday,
+      };
+    });
+
     return {
       totals: {
         totalSales,
         totalSalesReturn,
-        totalPurchase: 0,
-        totalPurchaseReturn: 0,
+        totalPurchase,
+        totalPurchaseReturn,
         profit,
         collectedIncome,
         invoiceDue,
@@ -643,6 +845,7 @@ export const DashboardService = {
       lowStock,
       recentInvoices: recentInvoicesOut,
       dueInvoices,
+      duePurchases,
       topCustomers,
       topCategories,
       categoryStats: {
@@ -652,6 +855,124 @@ export const DashboardService = {
       orderHeatmap: heatmap,
       chartPoints,
       chartRange,
+    };
+  },
+
+  async getProfitLoss(
+    tenantId: string,
+    opts: {
+      preset: ProfitLossPreset;
+      from?: string;
+      to?: string;
+    }
+  ) {
+    const { from, to, label } = resolveProfitLossRange(opts.preset, opts.from, opts.to);
+    const dateFilter = { $gte: from, $lte: to };
+
+    const [
+      salesAgg,
+      salesReturnAgg,
+      purchaseAgg,
+      purchaseReturnAgg,
+      salesCount,
+      purchaseCount,
+    ] = await Promise.all([
+      Invoice.aggregate<{ total: number; paid: number }>([
+        {
+          $match: {
+            ...tenantInvoices(tenantId),
+            hold: { $ne: true },
+            createdAt: dateFilter,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: "$totalAmount" },
+            paid: { $sum: "$paid" },
+          },
+        },
+      ]),
+      SalesReturn.aggregate<{ total: number }>([
+        {
+          $match: {
+            ...tenantReturns(tenantId),
+            createdAt: dateFilter,
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$totalAmount" } } },
+      ]),
+      Purchase.aggregate<{ total: number; paid: number }>([
+        {
+          $match: {
+            ...tenantPurchases(tenantId),
+            hold: { $ne: true },
+            createdAt: dateFilter,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: "$totalAmount" },
+            paid: { $sum: "$paid" },
+          },
+        },
+      ]),
+      PurchaseReturn.aggregate<{ total: number }>([
+        {
+          $match: {
+            ...tenantPurchaseReturns(tenantId),
+            createdAt: dateFilter,
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$totalAmount" } } },
+      ]),
+      Invoice.countDocuments({
+        ...tenantInvoices(tenantId),
+        hold: { $ne: true },
+        createdAt: dateFilter,
+      }),
+      Purchase.countDocuments({
+        ...tenantPurchases(tenantId),
+        hold: { $ne: true },
+        createdAt: dateFilter,
+      }),
+    ]);
+
+    const totalSales = roundMoney(salesAgg[0]?.total ?? 0);
+    const salesCollected = roundMoney(salesAgg[0]?.paid ?? 0);
+    const totalSalesReturn = roundMoney(salesReturnAgg[0]?.total ?? 0);
+    const totalPurchase = roundMoney(purchaseAgg[0]?.total ?? 0);
+    const purchasePaid = roundMoney(purchaseAgg[0]?.paid ?? 0);
+    const totalPurchaseReturn = roundMoney(purchaseReturnAgg[0]?.total ?? 0);
+
+    const netSales = roundMoney(totalSales - totalSalesReturn);
+    const netPurchase = roundMoney(totalPurchase - totalPurchaseReturn);
+    const grossProfit = roundMoney(netSales - netPurchase);
+    const profitMargin =
+      netSales > 0 ? Math.round((grossProfit / netSales) * 10000) / 100 : null;
+
+    return {
+      preset: opts.preset,
+      label,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      totals: {
+        totalSales,
+        totalSalesReturn,
+        netSales,
+        totalPurchase,
+        totalPurchaseReturn,
+        netPurchase,
+        grossProfit,
+        profitMargin,
+        salesCollected,
+        purchasePaid,
+      },
+      counts: {
+        salesOrders: salesCount,
+        purchaseOrders: purchaseCount,
+      },
     };
   },
 };

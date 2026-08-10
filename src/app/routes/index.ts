@@ -17,6 +17,8 @@ import { WarehouseRoutes } from '../Warehouse/warehouse.routes';
 import { ProductRoutes } from '../Product/product.routes';
 import { InvoiceRoutes } from '../Invoice/invoice.routes';
 import { SalesReturnRoutes } from '../SalesReturn/salesReturn.routes';
+import { PurchaseRoutes } from '../Purchase/purchase.routes';
+import { PurchaseReturnRoutes } from '../PurchaseReturn/purchaseReturn.routes';
 import { DashboardRoutes } from '../Dashboard/dashboard.routes';
 import { PaymentRoutes } from '../Payment/payment.route';
 import { CustomerRoutes } from '../Customer/customer.routes';
@@ -99,6 +101,14 @@ const moduleRoutes = [
   {
     path: "/sales-return",
     route: SalesReturnRoutes,
+  },
+  {
+    path: "/purchase",
+    route: PurchaseRoutes,
+  },
+  {
+    path: "/purchase-return",
+    route: PurchaseReturnRoutes,
   },
   {
     path: "/dashboard",

@@ -26,6 +26,12 @@ router.get(
 );
 
 router.get(
+  "/:supplierId/summary",
+  auth(USER_ROLE.admin, USER_ROLE.superAdmin, USER_ROLE.user),
+  SupplierController.getSummary
+);
+
+router.get(
   "/:supplierId",
   auth(USER_ROLE.admin, USER_ROLE.superAdmin, USER_ROLE.user),
   SupplierController.getSupplier

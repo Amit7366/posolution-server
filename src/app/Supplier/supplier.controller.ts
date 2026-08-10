@@ -26,8 +26,12 @@ const createSupplier = catchAsync(async (req, res) => {
 
 const getAllSuppliers = catchAsync(async (req, res) => {
   const tenantId = resolveTenantId(req);
+  const q = req.query as Record<string, string | undefined>;
 
-  const result = await SupplierService.getAllSuppliersFromDB(tenantId);
+  const result = await SupplierService.getAllSuppliersFromDB(tenantId, {
+    search: q.search,
+    status: q.status,
+  });
 
   sendResponse(res, {
     success: true,
@@ -49,6 +53,22 @@ const getSupplier = catchAsync(async (req, res) => {
     success: true,
     statusCode: httpStatus.OK,
     message: "Supplier retrieved",
+    data: result,
+  });
+});
+
+const getSummary = catchAsync(async (req, res) => {
+  const tenantId = resolveTenantId(req);
+
+  const result = await SupplierService.getSummaryFromDB(
+    req.params.supplierId,
+    tenantId
+  );
+
+  sendResponse(res, {
+    success: true,
+    statusCode: httpStatus.OK,
+    message: "Supplier summary",
     data: result,
   });
 });
@@ -90,6 +110,7 @@ export const SupplierController = {
   createSupplier,
   getAllSuppliers,
   getSupplier,
+  getSummary,
   updateSupplier,
   deleteSupplier,
 };
