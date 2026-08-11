@@ -1,3 +1,7 @@
+# Unique project name — required because /opt/*/server would otherwise collide
+# with other apps (e.g. Apivexo) that also live in a folder named "server".
+name: posulation-server
+
 services:
   server:
     container_name: posulation-server

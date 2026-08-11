@@ -25,6 +25,6 @@ jobs:
             cd /opt/posulation/server
             git fetch origin main
             git reset --hard origin/main
-            docker compose up -d --build --remove-orphans
+            docker compose -p posulation-server up -d --build --remove-orphans
             docker image prune -f
-            docker compose ps
+            docker compose -p posulation-server ps
