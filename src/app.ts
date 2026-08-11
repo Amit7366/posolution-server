@@ -39,6 +39,7 @@ app.use(
         connectSrc: [
           "'self'",
           "https://www.google-analytics.com",
+          "https://api.posulation.com",
           "https://sohoj-server.vercel.app",
         ],
         frameSrc: [
@@ -73,10 +74,10 @@ app.use(
 // use when cors issue face
 const allowedOrigin = [
   'http://localhost:3000',
-  'http://194.163.173.117',
   'http://localhost:5173',
+  'https://posulation.com',
+  'https://www.posulation.com',
   'https://posolution.vercel.app',
-
 ];
 
 const corsOptions = {

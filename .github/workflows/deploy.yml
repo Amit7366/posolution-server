@@ -1,0 +1,30 @@
+name: Deploy server to VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/posulation/server
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose up -d --build --remove-orphans
+            docker image prune -f
+            docker compose ps
