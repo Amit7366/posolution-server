@@ -24,6 +24,8 @@ export type TInvoiceParty = {
 export type TInvoice = {
   tenantId: string;
   invoiceNo: string;
+  /** Client-generated UUID for offline sync idempotency */
+  clientSaleId?: string;
   fromParty: TInvoiceParty;
   customerId?: Types.ObjectId;
   customerName: string;

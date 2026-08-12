@@ -4,6 +4,7 @@ import { CustomerModel, TCustomer } from "./customer.interface";
 const CustomerSchema = new Schema<TCustomer, CustomerModel>(
   {
     tenantId: { type: String, required: true, index: true },
+    clientCustomerId: { type: String, default: undefined, trim: true },
 
     name: { type: String, required: true, trim: true },
     phone: { type: String, default: "", trim: true },
@@ -26,6 +27,17 @@ CustomerSchema.index(
     unique: true,
     sparse: true,
     partialFilterExpression: { phone: { $type: "string", $gt: "" }, isDeleted: { $ne: true } },
+  }
+);
+CustomerSchema.index(
+  { tenantId: 1, clientCustomerId: 1 },
+  {
+    unique: true,
+    sparse: true,
+    partialFilterExpression: {
+      clientCustomerId: { $type: "string", $gt: "" },
+      isDeleted: { $ne: true },
+    },
   }
 );
 

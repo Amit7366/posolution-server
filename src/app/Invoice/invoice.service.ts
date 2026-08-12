@@ -139,6 +139,7 @@ function parseCustomerId(raw?: string | null): Types.ObjectId | undefined {
 
 type CreatePayload = {
   fromParty?: Partial<TInvoiceParty>;
+  clientSaleId?: string;
   customerId?: string;
   customerName: string;
   customerEmail?: string;
@@ -160,6 +161,12 @@ type CreatePayload = {
 
 export const InvoiceService = {
   async createIntoDB(payload: CreatePayload, user: any, tenantId: string) {
+    const clientSaleId = String(payload.clientSaleId ?? "").trim();
+    if (clientSaleId) {
+      const existing = await Invoice.findOne({ tenantId, clientSaleId }).lean();
+      if (existing) return existing;
+    }
+
     const built = await buildLineItems(tenantId, payload.items);
     const { vatAmount, totalAmount } = applyVat(
       built.subTotal,
@@ -211,6 +218,7 @@ export const InvoiceService = {
     const commonFields = {
       tenantId,
       invoiceNo,
+      ...(clientSaleId ? { clientSaleId } : {}),
       fromParty,
       ...(customerId ? { customerId } : {}),
       customerName: payload.customerName.trim(),
@@ -251,6 +259,12 @@ export const InvoiceService = {
             { session }
           );
         });
+      } catch (err: any) {
+        if (err?.code === 11000 && clientSaleId) {
+          const existing = await Invoice.findOne({ tenantId, clientSaleId }).lean();
+          if (existing) return existing;
+        }
+        throw err;
       } finally {
         await session.endSession();
       }
@@ -258,12 +272,19 @@ export const InvoiceService = {
       return doc;
     }
 
-    const doc = await Invoice.create({
-      ...commonFields,
-      stockDeducted: false,
-    });
-
-    return doc.toObject();
+    try {
+      const doc = await Invoice.create({
+        ...commonFields,
+        stockDeducted: false,
+      });
+      return doc.toObject();
+    } catch (err: any) {
+      if (err?.code === 11000 && clientSaleId) {
+        const existing = await Invoice.findOne({ tenantId, clientSaleId }).lean();
+        if (existing) return existing;
+      }
+      throw err;
+    }
   },
 
   async getAllFromDB(

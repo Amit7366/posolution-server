@@ -19,6 +19,7 @@ const lineItemSchema = z.object({
 export const createInvoiceSchema = z.object({
   body: z.object({
     fromParty: partySchema,
+    clientSaleId: z.string().min(1).max(80).optional(),
     customerId: z.string().optional(),
     customerName: z.string().min(1, "Customer name is required"),
     customerEmail: z.string().optional(),

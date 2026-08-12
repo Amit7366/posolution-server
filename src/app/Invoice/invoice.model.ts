@@ -28,6 +28,7 @@ const InvoiceSchema = new Schema<TInvoice, InvoiceModel>(
   {
     tenantId: { type: String, required: true, index: true },
     invoiceNo: { type: String, required: true },
+    clientSaleId: { type: String, default: undefined, trim: true },
 
     fromParty: { type: PartySchema, default: () => ({}) },
 
@@ -71,6 +72,17 @@ const InvoiceSchema = new Schema<TInvoice, InvoiceModel>(
 );
 
 InvoiceSchema.index({ tenantId: 1, invoiceNo: 1 }, { unique: true });
+InvoiceSchema.index(
+  { tenantId: 1, clientSaleId: 1 },
+  {
+    unique: true,
+    sparse: true,
+    partialFilterExpression: {
+      clientSaleId: { $type: "string", $gt: "" },
+      isDeleted: { $ne: true },
+    },
+  }
+);
 
 InvoiceSchema.pre("find", function (next) {
   this.where({ isDeleted: { $ne: true } });

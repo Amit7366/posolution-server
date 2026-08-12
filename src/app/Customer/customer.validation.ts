@@ -4,6 +4,7 @@ const statusEnum = z.enum(["active", "inactive"]);
 
 export const createCustomerSchema = z.object({
   body: z.object({
+    clientCustomerId: z.string().min(1).max(80).optional(),
     name: z.string().min(1, "Customer name is required"),
     phone: z.string().optional(),
     email: z.string().email().optional().or(z.literal("")),

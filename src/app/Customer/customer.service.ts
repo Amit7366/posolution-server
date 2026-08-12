@@ -21,11 +21,18 @@ export const CustomerService = {
     const name = String(payload.name ?? "").trim();
     if (!name) throw new AppError(httpStatus.BAD_REQUEST, "Customer name is required");
 
+    const clientCustomerId = String(payload.clientCustomerId ?? "").trim();
+    if (clientCustomerId) {
+      const existing = await Customer.findOne({ tenantId, clientCustomerId });
+      if (existing) return existing;
+    }
+
     const phone = normalizePhone(payload.phone);
 
     try {
       const doc = await Customer.create({
         tenantId,
+        ...(clientCustomerId ? { clientCustomerId } : {}),
         name,
         phone,
         email: String(payload.email ?? "").trim(),
@@ -36,6 +43,10 @@ export const CustomerService = {
       return doc;
     } catch (err: any) {
       if (err?.code === 11000) {
+        if (clientCustomerId) {
+          const existing = await Customer.findOne({ tenantId, clientCustomerId });
+          if (existing) return existing;
+        }
         throw new AppError(
           httpStatus.CONFLICT,
           "A customer with this phone already exists for your account"

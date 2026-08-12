@@ -4,6 +4,8 @@ export type TCustomerStatus = "active" | "inactive";
 
 export type TCustomer = {
   tenantId: string;
+  /** Client-generated UUID for offline sync idempotency */
+  clientCustomerId?: string;
   name: string;
   phone?: string;
   email?: string;
