@@ -2,6 +2,7 @@ import config from '../config';
 import { USER_ROLE } from '../User/user.constant';
 import { User } from '../User/user.model';
 import { generateAdminId, generateTenantIdFromUsers } from '../User/user.utils';
+import { seedDemoTenant } from './seedDemo';
 
 const superUser = {
   id:"S-0001",
@@ -51,6 +52,11 @@ const seedAdmin = async () => {
 const seed = async () => {
   await seedSuperAdmin();
   await seedAdmin();
+  try {
+    await seedDemoTenant();
+  } catch (err) {
+    console.error('[Seed] Demo tenant failed:', err);
+  }
 };
 
 export default seed;
