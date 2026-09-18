@@ -22,6 +22,7 @@ import { VerificationToken } from './VerificationToken.model';
 import { sendVerificationEmail } from './emailService';
 import { TNormalUser } from '../NormalUser/normalUser.interface';
 import { normalizeBdPhone, isValidBdPhone } from '../utilis/phone';
+import { TenantService } from '../Tenant/tenant.service';
 
 const createUserIntoDb = async (
   file: any,
@@ -151,6 +152,16 @@ const createUserIntoDb = async (
         newNormalUser = await NormalUser.create([normalUserPayload], { session });
         if (!newNormalUser.length) throw new AppError(httpStatus.BAD_REQUEST, 'Failed to create NormalUser');
 
+        await TenantService.upsertTenantForShopUser({
+          tenantId: String(userData.tenantId),
+          name: normalUserPayload.name || userData.username,
+          email: userData.email,
+          phone: normalUserPayload.contactNo,
+          ownerId: newUser[0]._id,
+          status: 'active',
+          session,
+        });
+
         break; // ✅ success
       } catch (err: any) {
         // Duplicate tenantId -> retry
@@ -239,6 +250,8 @@ const createAdminIntoDB = async (
   try {
     session.startTransaction();
     userData.id = await generateAdminId();
+    userData.tenantId = `staff-${userData.id}`;
+    userData.username = `admin-${userData.id}`.toLowerCase();
 
     // ✅ Fix: Assign a dummy unique referralId to avoid null duplicates
     userData.referralId = `ADMIN-${userData.id}`;
@@ -304,10 +317,83 @@ const changeStatus = async (id: string, payload: { status: string }) => {
   });
   return result;
 };
+
+const getAllUsersFromDB = async (query: Record<string, unknown>) => {
+  const page = Number(query.page) || 1;
+  const limit = Math.min(Number(query.limit) || 20, 100);
+  const skip = (page - 1) * limit;
+  const filter: Record<string, unknown> = { isDeleted: { $ne: true } };
+
+  if (query.role === "staff") {
+    filter.role = { $in: ["admin", "superAdmin"] };
+  } else if (typeof query.role === "string" && query.role.includes(",")) {
+    filter.role = {
+      $in: query.role
+        .split(",")
+        .map((r) => r.trim())
+        .filter(Boolean),
+    };
+  } else if (query.role) {
+    filter.role = query.role;
+  } else {
+    filter.role = "user";
+  }
+
+  if (query.status === 'active' || query.status === 'inactive') {
+    filter.status = query.status;
+  }
+  if (
+    query.subscriptionStatus === 'active' ||
+    query.subscriptionStatus === 'expired' ||
+    query.subscriptionStatus === 'pending' ||
+    query.subscriptionStatus === 'none'
+  ) {
+    filter.subscriptionStatus = query.subscriptionStatus;
+  }
+  if (typeof query.tenantId === 'string' && query.tenantId.trim()) {
+    filter.tenantId = query.tenantId.trim();
+  }
+  if (typeof query.search === 'string' && query.search.trim()) {
+    const s = query.search.trim();
+    filter.$or = [
+      { email: { $regex: s, $options: 'i' } },
+      { username: { $regex: s, $options: 'i' } },
+      { tenantId: { $regex: s, $options: 'i' } },
+    ];
+  }
+
+  const [rows, total] = await Promise.all([
+    User.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .select(
+        'id email username role tenantId status subscriptionStatus subscriptionStartDate subscriptionEndDate createdAt',
+      )
+      .lean(),
+    User.countDocuments(filter),
+  ]);
+
+  const profiles = await NormalUser.find({
+    user: { $in: rows.map((u) => u._id) },
+  })
+    .select('user name contactNo email presentAddress profileImg')
+    .lean();
+  const profileByUser = new Map(profiles.map((p) => [String(p.user), p]));
+
+  const data = rows.map((u) => ({
+    ...u,
+    profile: profileByUser.get(String(u._id)) || null,
+  }));
+
+  return { data, meta: { total, page, limit } };
+};
+
 export const UserServices = {
   createUserIntoDb,
   createAdminIntoDB,
   getMe,
   changeStatus,
   findByEmailIntoDb,
+  getAllUsersFromDB,
 };

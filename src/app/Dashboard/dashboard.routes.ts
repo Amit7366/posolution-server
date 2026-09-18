@@ -26,4 +26,10 @@ router.get(
   DashboardController.profitLoss
 );
 
+router.get(
+  "/platform",
+  auth(USER_ROLE.superAdmin, USER_ROLE.admin),
+  DashboardController.platform
+);
+
 export const DashboardRoutes = router;

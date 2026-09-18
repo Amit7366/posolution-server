@@ -1,7 +1,7 @@
 import httpStatus from "http-status";
 import catchAsync from "../utilis/catchAsync";
 import sendResponse from "../utilis/sendResponse";
-import { resolveTenantId } from "../utilis/resolveTenant";
+import { isPlatformRole, resolveTenantId } from "../utilis/resolveTenant";
 import { ProductService } from "./product.service";
 
 export const ProductController = {
@@ -18,7 +18,11 @@ export const ProductController = {
     }),
 
     getAll: catchAsync(async (req, res) => {
-        const tenantId = resolveTenantId(req);
+        const allTenants = String(req.query.allTenants) === "true";
+        const tenantId =
+          isPlatformRole(req.user?.role) && allTenants && !req.query.tenantId
+            ? null
+            : resolveTenantId(req);
         const result = await ProductService.getAllFromDB(tenantId, req.query as any);
 
         sendResponse(res, {

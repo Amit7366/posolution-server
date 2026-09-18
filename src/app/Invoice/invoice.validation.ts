@@ -92,5 +92,6 @@ export const getInvoiceListQuerySchema = z.object({
     since: z.string().optional(),
     customer: z.string().optional(),
     customerId: z.string().optional(),
+    tenantId: z.string().optional(),
   }),
 });

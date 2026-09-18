@@ -37,6 +37,7 @@ type TListOpts = {
   /** quantity <= lowStockThreshold or <= stockThreshold (default 10) */
   lowStockOnly?: boolean;
   stockThreshold?: number;
+  tenantId?: string;
 };
 
 /** req.query keeps strings; coerce for skip/limit math */
@@ -162,11 +163,13 @@ export const ProductService = {
     return doc;
   },
 
-  async getAllFromDB(tenantId: string, opts: TListOpts) {
+  async getAllFromDB(tenantId: string | null, opts: TListOpts) {
     const { page, limit } = parsePageLimit(opts);
     const skip = (page - 1) * limit;
 
-    const filter: any = { tenantId };
+    const filter: any = {};
+    const scopedTenant = tenantId || opts.tenantId;
+    if (scopedTenant) filter.tenantId = scopedTenant;
 
     if (opts.status) filter.status = opts.status;
     if (opts.storeId) filter.storeId = opts.storeId;

@@ -8,6 +8,10 @@ import { PurchaseReturn } from "../PurchaseReturn/purchaseReturn.model";
 import { Product } from "../Product/product.model";
 import { Supplier } from "../Supplier/supplier.model";
 import { Category } from "../Category/category.model";
+import { Tenant } from "../Tenant/tenant.model";
+import { User } from "../User/user.model";
+import { Payment } from "../Payment/payment.model";
+import { TenantService } from "../Tenant/tenant.service";
 
 const roundMoney = (n: number) => Math.round(n * 100) / 100;
 
@@ -973,6 +977,235 @@ export const DashboardService = {
         salesOrders: salesCount,
         purchaseOrders: purchaseCount,
       },
+    };
+  },
+
+  async getPlatformSummary() {
+    await TenantService.ensureTenantsBackfilled();
+
+    const now = new Date();
+    const monthStart = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
+    const prevMonthStart = startOfDay(
+      new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    );
+    const shopFilter = { role: "user", isDeleted: { $ne: true } };
+
+    const [
+      tenantTotal,
+      tenantActive,
+      tenantsThisMonth,
+      tenantsPrevMonth,
+      subActive,
+      subExpired,
+      subNone,
+      subPending,
+      pendingPayments,
+      pendingPrevMonth,
+      approvedThisMonthAgg,
+      approvedPrevMonthAgg,
+      chartAgg,
+      tenantChartAgg,
+      topTenantSales,
+      recentPending,
+      expiredUsers,
+      inactiveTenants,
+    ] = await Promise.all([
+      Tenant.countDocuments({}),
+      Tenant.countDocuments({ status: "active" }),
+      Tenant.countDocuments({ createdAt: { $gte: monthStart } }),
+      Tenant.countDocuments({
+        createdAt: { $gte: prevMonthStart, $lt: monthStart },
+      }),
+      User.countDocuments({ ...shopFilter, subscriptionStatus: "active" }),
+      User.countDocuments({ ...shopFilter, subscriptionStatus: "expired" }),
+      User.countDocuments({
+        ...shopFilter,
+        subscriptionStatus: { $in: ["none", null] },
+      }),
+      User.countDocuments({ ...shopFilter, subscriptionStatus: "pending" }),
+      Payment.countDocuments({ status: "pending" }),
+      Payment.countDocuments({
+        status: "pending",
+        createdAt: { $gte: prevMonthStart, $lt: monthStart },
+      }),
+      Payment.aggregate<{ total: number; count: number }>([
+        {
+          $match: {
+            status: "approved",
+            reviewedAt: { $gte: monthStart },
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$amount" }, count: { $sum: 1 } } },
+      ]),
+      Payment.aggregate<{ total: number }>([
+        {
+          $match: {
+            status: "approved",
+            reviewedAt: { $gte: prevMonthStart, $lt: monthStart },
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      Payment.aggregate<{ _id: { y: number; m: number }; total: number }>([
+        {
+          $match: {
+            status: "approved",
+            reviewedAt: {
+              $gte: startOfDay(new Date(now.getFullYear(), now.getMonth() - 11, 1)),
+            },
+          },
+        },
+        {
+          $group: {
+            _id: { y: { $year: "$reviewedAt" }, m: { $month: "$reviewedAt" } },
+            total: { $sum: "$amount" },
+          },
+        },
+        { $sort: { "_id.y": 1, "_id.m": 1 } },
+      ]),
+      Tenant.aggregate<{ _id: { y: number; m: number }; count: number }>([
+        {
+          $match: {
+            createdAt: {
+              $gte: startOfDay(new Date(now.getFullYear(), now.getMonth() - 11, 1)),
+            },
+          },
+        },
+        {
+          $group: {
+            _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" } },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { "_id.y": 1, "_id.m": 1 } },
+      ]),
+      Invoice.aggregate<{ _id: string; sales: number; invoices: number }>([
+        { $match: { isDeleted: { $ne: true }, hold: { $ne: true } } },
+        {
+          $group: {
+            _id: "$tenantId",
+            sales: { $sum: "$totalAmount" },
+            invoices: { $sum: 1 },
+          },
+        },
+        { $sort: { sales: -1 } },
+        { $limit: 5 },
+      ]),
+      Payment.find({ status: "pending" })
+        .sort({ createdAt: -1 })
+        .limit(8)
+        .populate("userId", "email username tenantId")
+        .lean(),
+      User.find({ ...shopFilter, subscriptionStatus: "expired" })
+        .sort({ subscriptionEndDate: -1 })
+        .limit(6)
+        .select("email username tenantId subscriptionEndDate")
+        .lean(),
+      Tenant.find({ status: "inactive" })
+        .sort({ updatedAt: -1 })
+        .limit(6)
+        .lean(),
+    ]);
+
+    const revenueThisMonth = roundMoney(approvedThisMonthAgg[0]?.total ?? 0);
+    const revenuePrevMonth = roundMoney(approvedPrevMonthAgg[0]?.total ?? 0);
+
+    const monthNames = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+    const chartPoints: { month: string; revenue: number; tenants: number }[] = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      const rev = chartAgg.find((x) => x._id.y === y && x._id.m === m);
+      const ten = tenantChartAgg.find((x) => x._id.y === y && x._id.m === m);
+      chartPoints.push({
+        month: monthNames[d.getMonth()],
+        revenue: roundMoney(rev?.total ?? 0),
+        tenants: ten?.count ?? 0,
+      });
+    }
+
+    const tenantDocs = await Tenant.find({
+      tenantId: { $in: topTenantSales.map((t) => t._id) },
+    })
+      .select("tenantId name logo")
+      .lean();
+    const tenantName = new Map(tenantDocs.map((t) => [t.tenantId, t]));
+
+    return {
+      kpis: {
+        tenants: tenantTotal,
+        tenantsActive: tenantActive,
+        tenantsTrend: pctChange(tenantsThisMonth, tenantsPrevMonth),
+        activeSubscriptions: subActive,
+        subscriptionsTrend: pctChange(subActive, Math.max(subActive - tenantsThisMonth, 0)),
+        pendingPayments,
+        pendingTrend: pctChange(pendingPayments, pendingPrevMonth),
+        revenueThisMonth,
+        revenueTrend: pctChange(revenueThisMonth, revenuePrevMonth),
+      },
+      subscriptionHealth: {
+        active: subActive,
+        expired: subExpired,
+        pending: subPending,
+        none: subNone,
+      },
+      chartPoints,
+      topTenants: topTenantSales.map((row) => ({
+        tenantId: row._id,
+        name: tenantName.get(row._id)?.name || row._id,
+        logo: tenantName.get(row._id)?.logo,
+        sales: roundMoney(row.sales),
+        invoices: row.invoices,
+      })),
+      alerts: [
+        ...recentPending.map((p: any) => ({
+          id: String(p._id),
+          type: "payment" as const,
+          title: p.userId?.email || p.tenantId,
+          issue: "Payment request pending review",
+          date: p.createdAt,
+          severity: "high" as const,
+          status: "pending",
+          href: "/dashboard/payments",
+          tenantId: p.tenantId,
+        })),
+        ...expiredUsers.map((u) => ({
+          id: String(u._id),
+          type: "subscription" as const,
+          title: u.email || u.tenantId,
+          issue: "Subscription expired",
+          date: u.subscriptionEndDate,
+          severity: "medium" as const,
+          status: "expired",
+          href: `/dashboard/tenants/${u.tenantId}`,
+          tenantId: u.tenantId,
+        })),
+        ...inactiveTenants.map((t) => ({
+          id: String(t._id),
+          type: "tenant" as const,
+          title: t.name,
+          issue: "Tenant inactive",
+          date: t.updatedAt,
+          severity: "low" as const,
+          status: "inactive",
+          href: `/dashboard/tenants/${t.tenantId}`,
+          tenantId: t.tenantId,
+        })),
+      ],
     };
   },
 };

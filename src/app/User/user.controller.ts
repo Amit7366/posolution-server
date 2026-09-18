@@ -91,10 +91,23 @@ const changeStatus = catchAsync(async (req, res) => {
     data: result,
   });
 });
+
+const getAllUsers = catchAsync(async (req, res) => {
+  const result = await UserServices.getAllUsersFromDB(req.query as Record<string, unknown>);
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: 'Users retrieved successfully',
+    data: result.data,
+    meta: result.meta,
+  });
+});
+
 export const UserController = {
   createUser,
   createAdmin,
   getMe,
   changeStatus,
   findByEmail,
+  getAllUsers,
 };

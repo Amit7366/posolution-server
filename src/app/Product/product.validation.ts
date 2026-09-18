@@ -165,5 +165,14 @@ export const getProductListQuerySchema = z.object({
 
     /** Used with lowStockOnly when product has no lowStockThreshold (default 10) */
     stockThreshold: z.coerce.number().min(0).max(1_000_000).optional(),
+
+    tenantId: z.string().optional(),
+    allTenants: z.preprocess(
+      (v) => {
+        if (v === undefined || v === null || v === "") return undefined;
+        return v === "true" || v === "1" || v === true;
+      },
+      z.boolean().optional()
+    ),
   }),
 });

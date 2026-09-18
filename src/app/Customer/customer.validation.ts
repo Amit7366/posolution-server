@@ -39,5 +39,6 @@ export const getCustomerListQuerySchema = z.object({
     status: statusEnum.optional(),
     page: z.coerce.number().min(1).optional(),
     limit: z.coerce.number().min(1).max(200).optional(),
+    tenantId: z.string().optional(),
   }),
 });

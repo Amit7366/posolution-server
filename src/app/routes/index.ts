@@ -22,6 +22,7 @@ import { PurchaseReturnRoutes } from '../PurchaseReturn/purchaseReturn.routes';
 import { DashboardRoutes } from '../Dashboard/dashboard.routes';
 import { PaymentRoutes } from '../Payment/payment.route';
 import { CustomerRoutes } from '../Customer/customer.routes';
+import { PlatformSettingsRoutes } from '../PlatformSettings/platformSettings.route';
 const router = Router();
 const moduleRoutes = [
   {
@@ -117,6 +118,10 @@ const moduleRoutes = [
   {
     path: "/payment",
     route: PaymentRoutes,
+  },
+  {
+    path: "/settings",
+    route: PlatformSettingsRoutes,
   },
 ];
 

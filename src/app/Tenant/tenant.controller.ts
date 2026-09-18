@@ -23,12 +23,13 @@ const createTenant = catchAsync(async (req: any, res) => {
 });
 
 const getAllTenants = catchAsync(async (req, res) => {
-  const result = await TenantService.getAllTenantsFromDB();
+  const result = await TenantService.getAllTenantsFromDB(req.query as Record<string, unknown>);
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: 'Tenants retrieved successfully',
-    data: result,
+    data: result.data,
+    meta: result.meta,
   });
 });
 

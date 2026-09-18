@@ -69,4 +69,10 @@ router.get(
   UserController.getMe,
 );
 
+router.get(
+  '/',
+  auth(USER_ROLE.superAdmin, USER_ROLE.admin),
+  UserController.getAllUsers,
+);
+
 export const UserRoutes = router;

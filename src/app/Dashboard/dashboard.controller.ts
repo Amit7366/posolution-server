@@ -36,4 +36,14 @@ export const DashboardController = {
       data: result,
     });
   }),
+
+  platform: catchAsync(async (req, res) => {
+    const result = await DashboardService.getPlatformSummary();
+    sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: "Platform dashboard",
+      data: result,
+    });
+  }),
 };
